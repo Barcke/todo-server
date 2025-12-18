@@ -2,13 +2,12 @@
   xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
   <modelVersion>4.0.0</modelVersion>
 
-  <groupId>cn.ideamake</groupId>
+  <groupId>com.barcke</groupId>
   <artifactId>calendar-design</artifactId>
-  <version>1.0-SNAPSHOT</version>
+  <version>1.0</version>
   <packaging>jar</packaging>
 
   <name>calendar-design</name>
-  <url>http://maven.apache.org</url>
 
   <properties>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
@@ -99,6 +98,57 @@
           <execution>
             <goals>
               <goal>repackage</goal>
+            </goals>
+          </execution>
+        </executions>
+      </plugin>
+      <plugin>
+        <groupId>com.google.cloud.tools</groupId>
+        <artifactId>jib-maven-plugin</artifactId>
+        <version>1.6.1</version>
+        <configuration>
+          <from>
+            <image>registry.cn-hangzhou.aliyuncs.com/barcke-myblog/openjdk21</image>
+            <auth>
+              <username>barcke</username>
+              <password>r6f778yuvDF%#$Serxs45r46rycd578c</password>
+            </auth>
+          </from>
+          <to>
+            <image>registry.cn-hangzhou.aliyuncs.com/barcke/cyst-admin-server</image>
+            <tags>
+              <tag>${project.version}</tag>
+            </tags>
+            <auth>
+              <username>barcke</username>
+              <password>r6f778yuvDF%#$Serxs45r46rycd578c</password>
+            </auth>
+          </to>
+          <container>
+            <mainClass>cn.barcke.Main</mainClass>
+            <jvmFlags>
+              <jvmFlag>-server</jvmFlag>
+              <jvmFlag>-Xms512m</jvmFlag>
+              <jvmFlag>-Xmx2048m</jvmFlag>
+              <jvmFlag>-Djava.awt.headless=true</jvmFlag>
+              <jvmFlag>-Duser.timezone=PRC</jvmFlag>
+            </jvmFlags>
+            <environment>
+              <server.port>6158</server.port>
+            </environment>
+            <ports>
+              <port>6158</port>
+            </ports>
+            <useCurrentTimestamp>true</useCurrentTimestamp>
+          </container>
+          <allowInsecureRegistries>true</allowInsecureRegistries>
+        </configuration>
+        <executions>
+          <execution>
+            <id>build-and-push-docker-image</id>
+            <phase>package</phase>
+            <goals>
+              <goal>build</goal>
             </goals>
           </execution>
         </executions>

@@ -131,7 +131,7 @@ classDiagram
 
 ### 1. EncryptionAspect（加密切面）
 
-**位置**：`cn.barcke.aspect.EncryptionAspect`
+**位置**：`aspect.com.barcke.EncryptionAspect`
 
 **职责**：
 - 拦截JPA Repository的`save`方法，在保存前自动加密标记字段
@@ -147,8 +147,8 @@ classDiagram
 
 ### 2. KmsService（密钥管理服务）
 
-**位置**：`cn.barcke.service.KmsService`（接口）
-**实现**：`cn.barcke.service.impl.KmsServiceImpl`
+**位置**：`service.com.barcke.KmsService`（接口）
+**实现**：`impl.service.com.barcke.KmsServiceImpl`
 
 **职责**：
 - 管理用户密钥的生成、存储、获取和轮换
@@ -163,7 +163,7 @@ classDiagram
 
 ### 3. EncryptionUtil（加密工具类）
 
-**位置**：`cn.barcke.tool.EncryptionUtil`
+**位置**：`tool.com.barcke.EncryptionUtil`
 
 **职责**：
 - 实现AES-256-GCM加密/解密算法
@@ -177,7 +177,7 @@ classDiagram
 
 ### 4. @EncryptField（加密注解）
 
-**位置**：`cn.barcke.annotation.EncryptField`
+**位置**：`annotation.com.barcke.EncryptField`
 
 **用途**：标记实体类中需要加密的字段
 
@@ -193,7 +193,7 @@ private String title;
 
 ### 5. UserKey（密钥实体）
 
-**位置**：`cn.barcke.pojo.UserKey`
+**位置**：`pojo.com.barcke.UserKey`
 
 **字段**：
 - `userId`: 用户ID（唯一）
