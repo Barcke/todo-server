@@ -55,7 +55,7 @@ public class AuthInterceptor implements HandlerInterceptor {
         }
 
         // 如果不是cn.barcke.controller包下的controller，直接放行
-        if (!handlerMethod.getMethod().getDeclaringClass().getName().contains("cn.barcke.controller")) {
+        if (!handlerMethod.getMethod().getDeclaringClass().getName().contains("com.barcke.controller")) {
             return true;
         }
 
