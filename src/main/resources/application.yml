@@ -1,0 +1,57 @@
+server:
+  port: 6158
+  servlet:
+    context-path: /api/
+
+spring:
+  jackson:
+    date-format: yyyy-MM-dd HH:mm:ss
+    time-zone: GMT+8
+    serialization:
+      write-dates-as-timestamps: false
+  servlet:
+    multipart:
+      max-request-size: 10MB
+      max-file-size: 15MB
+  # H2数据库配置
+  datasource:
+    url: jdbc:h2:file:/tmp/h2/testdb;MODE=MySQL;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE
+    driver-class-name: org.h2.Driver
+    username: sa
+    password:
+  h2:
+    console:
+      enabled: true
+      path: /h2-console
+  # JPA配置
+  jpa:
+    database-platform: org.hibernate.dialect.H2Dialect
+    hibernate:
+      ddl-auto: update
+    show-sql: true
+    properties:
+      hibernate:
+        format_sql: true
+
+# 白名单配置
+auth:
+  whiteList: /auth/register,/auth/login
+
+jwt:
+  #JWT存储的请求头
+  tokenHeader: BARCKE-TOKEN
+  #JWT加解密使用的密钥
+  secret: barcke-secret
+  #JWT的超期限时间(60*60*24)
+  expiration: 86400
+
+# KMS配置
+kms:
+  # 主密钥（Base64编码的32字节AES-256密钥）
+  # 生产环境建议使用环境变量: ${KMS_MASTER_KEY}
+  # 生成方式: 使用EncryptionUtil.generateKey()生成后Base64编码
+  # 注意：这是开发环境密钥，生产环境请更换为安全的密钥
+  masterKey: Ud7h6c7R20wcycQOHv7xEBXsK0NAi9VWdRjBUTlgDe0=
+  # 是否启用加密（默认启用）
+  enabled: true
+
