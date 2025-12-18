@@ -48,7 +48,7 @@ public class Todo {
      * Todo 内容
      */
     @EncryptField
-    @Column(name = "title", nullable = false, length = 200)
+    @Column(name = "title", nullable = false, length = 2000)
     private String title;
 
     /**

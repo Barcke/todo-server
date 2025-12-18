@@ -11,6 +11,8 @@ import org.aspectj.lang.annotation.Around;
 import org.aspectj.lang.annotation.Aspect;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.lang.reflect.Field;
 import java.util.*;
@@ -38,12 +40,16 @@ public class EncryptionAspect {
     // 缓存实体类的加密字段信息，提高性能
     private final Map<Class<?>, List<Field>> encryptedFieldsCache = new HashMap<>();
 
+    // 使用ThreadLocal标记当前线程是否正在处理解密，避免循环拦截
+    private static final ThreadLocal<Boolean> DECRYPTING_FLAG = ThreadLocal.withInitial(() -> false);
+
     /**
      * 拦截Repository的save方法，保存前加密
+     * 注意：解密操作在事务提交后执行，确保数据库保存的是加密数据
      */
     @Around("execution(* org.springframework.data.jpa.repository.JpaRepository.save(..))")
     public Object encryptBeforeSave(ProceedingJoinPoint joinPoint) throws Throwable {
-        if (!kmsEnabled) {
+        if (!kmsEnabled || DECRYPTING_FLAG.get()) {
             return joinPoint.proceed();
         }
 
@@ -53,6 +59,9 @@ public class EncryptionAspect {
         }
 
         try {
+            // 设置标志，避免在获取密钥时触发循环查询
+            DECRYPTING_FLAG.set(true);
+            
             // 获取用户ID（从上下文或实体中获取）
             String userId = getUserIdFromEntity(entity);
             if (userId == null) {
@@ -60,26 +69,53 @@ public class EncryptionAspect {
                 return joinPoint.proceed();
             }
 
-            // 获取用户密钥
+            // 获取用户密钥（此时标志已设置，kmsService内部的查询不会被拦截）
             byte[] userKey = kmsService.getOrGenerateUserKey(userId);
             if (userKey == null) {
                 log.warn("无法获取用户密钥，跳过加密");
                 return joinPoint.proceed();
             }
 
+            // 清除标志，允许后续的保存操作正常进行
+            DECRYPTING_FLAG.set(false);
+
             // 加密实体字段
             encryptEntityFields(entity, userKey);
 
-            // 继续执行保存操作
+            // 继续执行保存操作（此时数据是加密的）
             Object result = joinPoint.proceed();
 
-            // 保存后解密（恢复实体状态，避免影响后续操作）
-            decryptEntityFields(entity, userKey);
+            // 检查是否在事务中
+            if (TransactionSynchronizationManager.isActualTransactionActive()) {
+                // 在事务中：注册事务同步回调，在事务提交后解密
+                // 这样可以确保数据库保存的是加密数据
+                final Object finalEntity = result;
+                final byte[] finalUserKey = userKey;
+                TransactionSynchronizationManager.registerSynchronization(
+                    new TransactionSynchronization() {
+                        @Override
+                        public void afterCommit() {
+                            // 事务提交后解密，恢复实体状态
+                            try {
+                                decryptEntityFields(finalEntity, finalUserKey);
+                            } catch (Exception e) {
+                                log.error("事务提交后解密失败", e);
+                            }
+                        }
+                    }
+                );
+            } else {
+                // 不在事务中：立即解密（向后兼容）
+                decryptEntityFields(result, userKey);
+            }
 
             return result;
         } catch (Exception e) {
             log.error("加密失败", e);
             throw e;
+        } finally {
+            // 确保标志被清除
+            DECRYPTING_FLAG.set(false);
         }
     }
 
@@ -88,22 +124,18 @@ public class EncryptionAspect {
      */
     @Around("execution(* org.springframework.data.jpa.repository.JpaRepository.findById(..))")
     public Object decryptAfterFindById(ProceedingJoinPoint joinPoint) throws Throwable {
-        if (!kmsEnabled) {
+        if (!kmsEnabled || DECRYPTING_FLAG.get()) {
             return joinPoint.proceed();
         }
 
         Object result = joinPoint.proceed();
         if (result == null) {
-            return result;
+            return null;
         }
 
         // Optional类型处理
-        if (result instanceof Optional) {
-            Optional<?> optional = (Optional<?>) result;
-            if (optional.isPresent()) {
-                Object entity = optional.get();
-                decryptEntity(entity);
-            }
+        if (result instanceof Optional<?> optional) {
+            optional.ifPresent(this::decryptEntity);
         }
 
         return result;
@@ -114,13 +146,12 @@ public class EncryptionAspect {
      */
     @Around("execution(* org.springframework.data.jpa.repository.JpaRepository.findAll(..))")
     public Object decryptAfterFindAll(ProceedingJoinPoint joinPoint) throws Throwable {
-        if (!kmsEnabled) {
+        if (!kmsEnabled || DECRYPTING_FLAG.get()) {
             return joinPoint.proceed();
         }
 
         Object result = joinPoint.proceed();
-        if (result instanceof Collection) {
-            Collection<?> collection = (Collection<?>) result;
+        if (result instanceof Collection<?> collection) {
             for (Object entity : collection) {
                 decryptEntity(entity);
             }
@@ -134,13 +165,13 @@ public class EncryptionAspect {
      */
     @Around("execution(* org.springframework.data.jpa.repository.JpaRepository+.find*(..))")
     public Object decryptAfterFind(ProceedingJoinPoint joinPoint) throws Throwable {
-        if (!kmsEnabled) {
+        if (!kmsEnabled || DECRYPTING_FLAG.get()) {
             return joinPoint.proceed();
         }
 
         Object result = joinPoint.proceed();
         if (result == null) {
-            return result;
+            return null;
         }
 
         // 处理单个实体
@@ -148,8 +179,7 @@ public class EncryptionAspect {
             decryptEntity(result);
         }
         // 处理集合
-        else if (result instanceof Collection) {
-            Collection<?> collection = (Collection<?>) result;
+        else if (result instanceof Collection<?> collection) {
             for (Object entity : collection) {
                 if (entity != null && isEntityType(entity.getClass())) {
                     decryptEntity(entity);
@@ -157,8 +187,7 @@ public class EncryptionAspect {
             }
         }
         // 处理Optional
-        else if (result instanceof Optional) {
-            Optional<?> optional = (Optional<?>) result;
+        else if (result instanceof Optional<?> optional) {
             if (optional.isPresent()) {
                 Object entity = optional.get();
                 if (isEntityType(entity.getClass())) {
@@ -179,8 +208,7 @@ public class EncryptionAspect {
             try {
                 field.setAccessible(true);
                 Object value = field.get(entity);
-                if (value != null && value instanceof String) {
-                    String plaintext = (String) value;
+                if (value instanceof String plaintext) {
                     if (!plaintext.isEmpty()) {
                         String ciphertext = EncryptionUtil.encrypt(plaintext, userKey);
                         field.set(entity, ciphertext);
@@ -201,20 +229,37 @@ public class EncryptionAspect {
             try {
                 field.setAccessible(true);
                 Object value = field.get(entity);
-                if (value != null && value instanceof String) {
-                    String ciphertext = (String) value;
+                if (value instanceof String ciphertext) {
                     if (!ciphertext.isEmpty()) {
                         try {
                             String plaintext = EncryptionUtil.decrypt(ciphertext, userKey);
                             field.set(entity, plaintext);
+                        } catch (IllegalArgumentException e) {
+                            // 数据格式错误（可能是未加密的数据或损坏的数据）
+                            // 记录警告但不抛出异常，保持向后兼容
+                            log.warn("解密字段失败 - 数据格式错误: 实体={}, 字段={}, 错误={}, 数据长度={}", 
+                                entity.getClass().getSimpleName(), 
+                                field.getName(), 
+                                e.getMessage(),
+                                ciphertext.length());
+                            // 不修改字段值，保持原样
                         } catch (Exception e) {
-                            // 如果解密失败，可能是未加密的数据（向后兼容）
-                            log.debug("解密失败，可能是未加密数据: {}", field.getName());
+                            // 其他解密错误（密钥错误、数据损坏等）
+                            log.error("解密字段失败: 实体={}, 字段={}, 错误类型={}, 错误消息={}", 
+                                entity.getClass().getSimpleName(),
+                                field.getName(),
+                                e.getClass().getSimpleName(),
+                                e.getMessage(), 
+                                e);
+                            // 不修改字段值，保持原样
                         }
                     }
                 }
             } catch (Exception e) {
-                log.error("解密字段失败: {}", field.getName(), e);
+                log.error("访问字段失败: 实体={}, 字段={}", 
+                    entity.getClass().getSimpleName(), 
+                    field.getName(), 
+                    e);
             }
         }
     }
@@ -227,6 +272,15 @@ public class EncryptionAspect {
             return;
         }
 
+        // 如果已经在解密过程中，直接返回，避免循环
+        if (DECRYPTING_FLAG.get()) {
+            return;
+        }
+
+        // 设置解密标志，避免循环拦截
+        // 注意：标志应该在调用 getUserIdFromEntity 之前设置，因为访问实体字段可能触发懒加载
+        DECRYPTING_FLAG.set(true);
+
         try {
             String userId = getUserIdFromEntity(entity);
             if (userId == null) {
@@ -234,6 +288,7 @@ public class EncryptionAspect {
                 return;
             }
 
+            // 获取用户密钥（此时标志已设置，kmsService内部的查询不会被拦截）
             byte[] userKey = kmsService.getOrGenerateUserKey(userId);
             if (userKey == null) {
                 log.debug("无法获取用户密钥，跳过解密");
@@ -243,6 +298,9 @@ public class EncryptionAspect {
             decryptEntityFields(entity, userKey);
         } catch (Exception e) {
             log.error("解密实体失败", e);
+        } finally {
+            // 清除标志
+            DECRYPTING_FLAG.set(false);
         }
     }
 
@@ -270,9 +328,10 @@ public class EncryptionAspect {
 
     /**
      * 从实体中获取用户ID
+     * 注意：此方法在 DECRYPTING_FLAG 已设置的情况下调用，避免触发循环查询
      */
     private String getUserIdFromEntity(Object entity) {
-        // 优先从上下文获取
+        // 优先从上下文获取（不会触发数据库查询）
         try {
             String userId = BarckeContext.getUserId();
             if (userId != null) {
@@ -283,6 +342,8 @@ public class EncryptionAspect {
         }
 
         // 从实体字段中获取userId
+        // 注意：访问字段时可能触发JPA懒加载，但由于已设置DECRYPTING_FLAG，不会再次拦截
+        // 使用反射直接访问字段，避免触发懒加载
         try {
             Field userIdField = findField(entity.getClass(), "userId");
             if (userIdField != null) {

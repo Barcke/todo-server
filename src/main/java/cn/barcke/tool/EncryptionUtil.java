@@ -113,13 +113,43 @@ public class EncryptionUtil {
             }
 
             // Base64解码
-            byte[] encryptedData = Base64.getDecoder().decode(ciphertext);
+            byte[] encryptedData;
+            try {
+                encryptedData = Base64.getDecoder().decode(ciphertext);
+            } catch (IllegalArgumentException e) {
+                log.error("Base64解码失败，数据可能不是有效的Base64编码。数据长度: {}, 数据前缀: {}", 
+                    ciphertext.length(), 
+                    ciphertext.length() > 20 ? ciphertext.substring(0, 20) : ciphertext);
+                throw new RuntimeException("Base64解码失败: " + e.getMessage(), e);
+            }
+
+            // 验证数据长度（至少需要IV长度）
+            if (encryptedData.length < GCM_IV_LENGTH) {
+                log.error("解密数据长度不足。期望至少 {} 字节，实际 {} 字节。数据长度: {}, 数据前缀: {}", 
+                    GCM_IV_LENGTH, 
+                    encryptedData.length,
+                    ciphertext.length(),
+                    ciphertext.length() > 20 ? ciphertext.substring(0, 20) : ciphertext);
+                throw new IllegalArgumentException(
+                    String.format("解密数据长度不足。期望至少 %d 字节（IV长度），实际 %d 字节", 
+                        GCM_IV_LENGTH, encryptedData.length));
+            }
 
             // 提取IV和密文
             ByteBuffer byteBuffer = ByteBuffer.wrap(encryptedData);
             byte[] iv = new byte[GCM_IV_LENGTH];
             byteBuffer.get(iv);
-            byte[] encryptedBytes = new byte[byteBuffer.remaining()];
+            
+            // 验证剩余数据长度
+            int remaining = byteBuffer.remaining();
+            if (remaining <= 0) {
+                log.error("解密数据格式错误：IV之后没有密文数据。数据长度: {}, 数据前缀: {}", 
+                    ciphertext.length(),
+                    ciphertext.length() > 20 ? ciphertext.substring(0, 20) : ciphertext);
+                throw new IllegalArgumentException("解密数据格式错误：IV之后没有密文数据");
+            }
+            
+            byte[] encryptedBytes = new byte[remaining];
             byteBuffer.get(encryptedBytes);
 
             // 创建密钥规范
@@ -136,8 +166,20 @@ public class EncryptionUtil {
             byte[] decryptedBytes = cipher.doFinal(encryptedBytes);
 
             return new String(decryptedBytes, StandardCharsets.UTF_8);
+        } catch (IllegalArgumentException e) {
+            // 数据格式错误，记录详细信息但不抛出异常，允许上层处理
+            log.error("解密失败 - 数据格式错误: {}, 数据长度: {}, 数据前缀: {}", 
+                e.getMessage(),
+                ciphertext.length(),
+                ciphertext.length() > 20 ? ciphertext.substring(0, 20) : ciphertext);
+            throw new RuntimeException("解密失败 - 数据格式错误: " + e.getMessage(), e);
         } catch (Exception e) {
-            log.error("解密失败", e);
+            log.error("解密失败 - 异常类型: {}, 消息: {}, 数据长度: {}, 数据前缀: {}", 
+                e.getClass().getSimpleName(),
+                e.getMessage(),
+                ciphertext.length(),
+                ciphertext.length() > 20 ? ciphertext.substring(0, 20) : ciphertext, 
+                e);
             throw new RuntimeException("解密失败: " + e.getMessage(), e);
         }
     }
