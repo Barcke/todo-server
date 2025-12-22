@@ -4,6 +4,7 @@ import com.barcke.interceptor.AuthInterceptor;
 import com.barcke.interceptor.CORSSignatureInterceptor;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.web.servlet.config.annotation.CorsRegistry;
 import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 
@@ -24,9 +25,25 @@ public class WebMvcConfig implements WebMvcConfigurer {
 
     private final CORSSignatureInterceptor corsSignatureInterceptor;
 
+    /**
+     * 配置 CORS 跨域支持
+     * Spring 的 CORS 配置会自动处理所有请求，包括 OPTIONS 预检请求和异常响应
+     * 这是最可靠的方式，比拦截器更早执行
+     */
+    @Override
+    public void addCorsMappings(CorsRegistry registry) {
+        registry.addMapping("/**")
+                .allowedOriginPatterns("*")  // 使用 allowedOriginPatterns 支持所有域名（Spring 5.3+）
+                .allowedMethods("GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH")  // 允许的 HTTP 方法
+                .allowedHeaders("*")          // 允许所有请求头
+                .exposedHeaders("*")          // 暴露所有响应头
+                .allowCredentials(true)       // 允许携带凭证
+                .maxAge(3600);               // 预检请求缓存时间（秒）
+    }
+
     @Override
     public void addInterceptors(InterceptorRegistry registry) {
-        //1.配置跨域处理拦截器
+        // CORS 拦截器可以保留作为备用，但 Spring CORS 配置已经处理了跨域
         registry.addInterceptor(corsSignatureInterceptor).addPathPatterns("/**");
 
         registry.addInterceptor(authInterceptor)

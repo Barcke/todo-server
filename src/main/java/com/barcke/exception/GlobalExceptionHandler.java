@@ -2,6 +2,7 @@ package com.barcke.exception;
 
 import com.barcke.common.CommonException;
 import com.barcke.common.Result;
+import jakarta.servlet.http.HttpServletResponse;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -22,11 +23,23 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 public class GlobalExceptionHandler {
 
     /**
+     * 设置CORS响应头
+     */
+    private void setCorsHeaders(HttpServletResponse response) {
+        response.setHeader("Access-Control-Allow-Origin", "*");
+        response.setHeader("Access-Control-Allow-Methods", "*");
+        response.setHeader("Access-Control-Max-Age", "3600");
+        response.setHeader("Access-Control-Allow-Headers", "content-type, Authorization, TOKEN, Auth-Info, token, BARCKE-TOKEN");
+        response.setHeader("Access-Control-Allow-Credentials", "true");
+    }
+
+    /**
      * 处理自定义异常
      */
     @ExceptionHandler(CommonException.class)
     @ResponseStatus(HttpStatus.OK)
-    public Result<?> handleCommonException(CommonException e) {
+    public Result<?> handleCommonException(CommonException e, HttpServletResponse response) {
+        setCorsHeaders(response);
         log.error("业务异常: {}", e.getMessage());
         return Result.fail(e.getMessage());
     }
@@ -36,7 +49,8 @@ public class GlobalExceptionHandler {
      */
     @ExceptionHandler(IllegalArgumentException.class)
     @ResponseStatus(HttpStatus.BAD_REQUEST)
-    public Result<?> handleIllegalArgumentException(IllegalArgumentException e) {
+    public Result<?> handleIllegalArgumentException(IllegalArgumentException e, HttpServletResponse response) {
+        setCorsHeaders(response);
         log.error("参数异常: {}", e.getMessage());
         return Result.fail("参数错误: " + e.getMessage());
     }
@@ -46,7 +60,8 @@ public class GlobalExceptionHandler {
      */
     @ExceptionHandler(Exception.class)
     @ResponseStatus(HttpStatus.INTERNAL_SERVER_ERROR)
-    public Result<?> handleException(Exception e) {
+    public Result<?> handleException(Exception e, HttpServletResponse response) {
+        setCorsHeaders(response);
         log.error("系统异常: ", e);
         return Result.fail("系统异常，请联系管理员");
     }
