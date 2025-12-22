@@ -1,7 +1,6 @@
 package com.barcke.config;
 
 import com.barcke.interceptor.AuthInterceptor;
-import com.barcke.interceptor.CORSSignatureInterceptor;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.servlet.config.annotation.CorsRegistry;
@@ -23,8 +22,6 @@ public class WebMvcConfig implements WebMvcConfigurer {
 
     private final AuthInterceptor authInterceptor;
 
-    private final CORSSignatureInterceptor corsSignatureInterceptor;
-
     /**
      * 配置 CORS 跨域支持
      * Spring 的 CORS 配置会自动处理所有请求，包括 OPTIONS 预检请求和异常响应
@@ -43,9 +40,6 @@ public class WebMvcConfig implements WebMvcConfigurer {
 
     @Override
     public void addInterceptors(InterceptorRegistry registry) {
-        // CORS 拦截器可以保留作为备用，但 Spring CORS 配置已经处理了跨域
-        registry.addInterceptor(corsSignatureInterceptor).addPathPatterns("/**");
-
         registry.addInterceptor(authInterceptor)
                 .addPathPatterns("/**")
                 .excludePathPatterns(
