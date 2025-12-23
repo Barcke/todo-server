@@ -20,8 +20,10 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -51,8 +53,11 @@ public class TodoServiceImpl implements TodoService {
             throw CommonException.toast("用户未登录");
         }
 
-        // 构建 Todo 实体
-        Todo todo = Todo.builder()
+        String repeatType = request.getRepeatType() != null ? request.getRepeatType() : "none";
+        RepeatRule repeatRule = request.getRepeatRule();
+
+        // 构建第一个 Todo 实体
+        Todo firstTodo = Todo.builder()
                 .userId(userId)
                 .title(request.getTitle())
                 .description(request.getDescription())
@@ -61,19 +66,45 @@ public class TodoServiceImpl implements TodoService {
                 .typeId(request.getTypeId())
                 .status("pending")
                 .source("normal")
-                .repeatType(request.getRepeatType() != null ? request.getRepeatType() : "none")
-                .repeatRule(request.getRepeatRule() != null ? JSONUtil.toJsonStr(request.getRepeatRule()) : null)
+                .repeatType(repeatType)
+                .repeatRule(repeatRule != null ? JSONUtil.toJsonStr(repeatRule) : null)
                 .delFlag(false)
                 .build();
 
-        todo = todoRepository.save(todo);
+        firstTodo = todoRepository.save(firstTodo);
 
-        // 关联附件
+        // 关联附件到第一个 Todo
         if (request.getAttachmentIds() != null && !request.getAttachmentIds().isEmpty()) {
-            associateAttachments(todo.getId(), request.getAttachmentIds(), userId);
+            associateAttachments(firstTodo.getId(), request.getAttachmentIds(), userId);
         }
 
-        return convertToResponse(todo);
+        // 如果设置了重复规则，生成重复的 Todo
+        if (!"none".equals(repeatType) && repeatRule != null) {
+            List<LocalDate> repeatDates = generateRepeatDates(request.getDate(), repeatType, repeatRule);
+            if (!repeatDates.isEmpty()) {
+                List<Todo> repeatTodos = new ArrayList<>();
+                for (LocalDate date : repeatDates) {
+                    Todo repeatTodo = Todo.builder()
+                            .userId(userId)
+                            .title(request.getTitle())
+                            .description(request.getDescription())
+                            .date(date)
+                            .time(request.getTime())
+                            .typeId(request.getTypeId())
+                            .status("pending")
+                            .source("normal")
+                            .repeatType(repeatType)
+                            .repeatRule(JSONUtil.toJsonStr(repeatRule))
+                            .delFlag(false)
+                            .build();
+                    repeatTodos.add(repeatTodo);
+                }
+                // 批量保存重复的 Todo
+                todoRepository.saveAll(repeatTodos);
+            }
+        }
+
+        return convertToResponse(firstTodo);
     }
 
     @Override
@@ -232,6 +263,109 @@ public class TodoServiceImpl implements TodoService {
         List<Todo> todos = todoRepository.findByUserIdAndDateBetweenAndStatusAndDelFlagFalseOrderByDateAscTimeAsc(userId, startDate, endDate, status);
         return todos.stream()
                 .map(this::convertToResponse)
+                .collect(Collectors.toList());
+    }
+
+    /**
+     * 根据重复规则生成重复日期列表
+     * 
+     * @param startDate 开始日期
+     * @param repeatType 重复类型（daily/weekly/monthly）
+     * @param repeatRule 重复规则
+     * @return 重复日期列表
+     */
+    private List<LocalDate> generateRepeatDates(LocalDate startDate, String repeatType, RepeatRule repeatRule) {
+        List<LocalDate> dates = new ArrayList<>();
+        LocalDate endDate = startDate.plusYears(1); // 默认生成未来一年的重复日期
+
+        switch (repeatType) {
+            case "daily":
+                // 每天重复，生成未来365天
+                LocalDate currentDate = startDate.plusDays(1);
+                while (!currentDate.isAfter(endDate)) {
+                    dates.add(currentDate);
+                    currentDate = currentDate.plusDays(1);
+                }
+                break;
+
+            case "weekly":
+                // 按周重复，根据 days 数组（周几）生成
+                if (repeatRule.getDays() != null && !repeatRule.getDays().isEmpty()) {
+                    // 从开始日期之后的第一周开始，生成未来52周
+                    for (int week = 1; week <= 52; week++) {
+                        LocalDate weekStart = startDate.plusWeeks(week);
+                        // 获取该周的第一天（周一）
+                        LocalDate mondayOfWeek = weekStart.with(DayOfWeek.MONDAY);
+                        for (Integer dayOfWeek : repeatRule.getDays()) {
+                            // dayOfWeek: 1=周一, 7=周日
+                            // Java DayOfWeek: 1=周一, 7=周日
+                            DayOfWeek targetDayOfWeek = DayOfWeek.of(dayOfWeek);
+                            LocalDate targetDate = mondayOfWeek.with(targetDayOfWeek);
+                            // 确保日期在开始日期之后且在结束日期之前
+                            if (targetDate.isAfter(startDate) && !targetDate.isAfter(endDate)) {
+                                dates.add(targetDate);
+                            }
+                        }
+                    }
+                } else {
+                    // 如果没有指定周几，默认每周同一天
+                    LocalDate currentWeekDate = startDate.plusWeeks(1);
+                    while (!currentWeekDate.isAfter(endDate)) {
+                        dates.add(currentWeekDate);
+                        currentWeekDate = currentWeekDate.plusWeeks(1);
+                    }
+                }
+                break;
+
+            case "monthly":
+                // 按月重复，根据 days 数组（每月几号）生成
+                if (repeatRule.getDays() != null && !repeatRule.getDays().isEmpty()) {
+                    // 从开始日期之后的第一个月开始，生成未来12个月
+                    for (int month = 1; month <= 12; month++) {
+                        LocalDate targetMonth = startDate.plusMonths(month);
+                        // 获取该月的第一天
+                        LocalDate firstDayOfMonth = targetMonth.withDayOfMonth(1);
+                        for (Integer dayOfMonth : repeatRule.getDays()) {
+                            try {
+                                LocalDate targetDate = firstDayOfMonth.withDayOfMonth(dayOfMonth);
+                                // 确保日期在开始日期之后且在结束日期之前
+                                if (targetDate.isAfter(startDate) && !targetDate.isAfter(endDate)) {
+                                    dates.add(targetDate);
+                                }
+                            } catch (Exception e) {
+                                // 如果该月没有这一天（如2月30日），跳过
+                                log.debug("跳过无效日期: {}月{}日", firstDayOfMonth.getMonthValue(), dayOfMonth);
+                            }
+                        }
+                    }
+                } else {
+                    // 如果没有指定日期，默认每月同一天
+                    int dayOfMonth = startDate.getDayOfMonth();
+                    LocalDate currentMonthDate = startDate.plusMonths(1);
+                    while (!currentMonthDate.isAfter(endDate)) {
+                        try {
+                            LocalDate targetDate = currentMonthDate.withDayOfMonth(dayOfMonth);
+                            dates.add(targetDate);
+                            currentMonthDate = currentMonthDate.plusMonths(1);
+                        } catch (Exception e) {
+                            // 如果该月没有这一天，使用该月最后一天
+                            LocalDate lastDayOfMonth = currentMonthDate.withDayOfMonth(currentMonthDate.lengthOfMonth());
+                            dates.add(lastDayOfMonth);
+                            currentMonthDate = currentMonthDate.plusMonths(1);
+                        }
+                    }
+                }
+                break;
+
+            default:
+                log.warn("未知的重复类型: {}", repeatType);
+                break;
+        }
+
+        // 去重并排序
+        return dates.stream()
+                .distinct()
+                .sorted()
                 .collect(Collectors.toList());
     }
 
